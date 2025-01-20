@@ -1,12 +1,11 @@
 ---
-title: '使用 Docker 部署私有密码管理服务 Vaultwarden'
+title: '使用 Docker 部署私有密码管理服务 Vaultwarden：详细实践指南'
 date: '2025-01-18'
 tags: ['password-manager', 'vaultwarden', 'docker', 'self-hosted', 'security']
 draft: false
 summary: '详细介绍如何使用 Docker 部署私有密码管理服务 Vaultwarden，包括安全配置、性能优化、自动备份等完整解决方案。本文适合想要搭建私有密码管理系统的个人或小型团队。'
 authors: ['adrain']
 ---
-
 
 ## 项目概述
 
@@ -16,7 +15,7 @@ Vaultwarden 是一个用 Rust 编写的开源密码管理服务，它是 Bitward
 - 部署维护更简单
 - 完全兼容官方客户端
 - 支持所有核心功能
-- 只需要记住一个主密码就能使用，如果忘记主密码还没有导出备份将是一场灾难
+- 只需要记住一个主密码来管理和使用其他密码，**如果忘记主密码还没有导出备份将是一场灾难**
 
 本文将详细介绍如何使用 Docker 部署 Vaultwarden，并配置必要的安全措施。
 
@@ -27,46 +26,33 @@ Vaultwarden 是一个用 Rust 编写的开源密码管理服务，它是 Bitward
 > - Docker 版本：24.0.0 或更高
 > - 域名：vault.adrainlee.me（请替换为你的实际域名）
 
-
 ## 安全性考虑
 
 在开始部署之前，请确保考虑以下安全措施：
 
-1. 系统安全
+### 1. 系统安全
 - 使用防火墙限制端口访问
 - 启用 fail2ban 防止暴力攻击
 - 定期更新系统和软件包
-2. 数据安全
+- 最小权限原则：仅开放必要的系统服务
+
+### 2. 数据安全
 - 启用定时备份
 - 使用加密存储
 - 实施访问控制
-3. 网络安全
+- 定期验证备份完整性
+
+### 3. 网络安全
 - 配置 SSL/TLS 证书
 - 启用 HTTP/2
 - 实施速率限制
+- 使用反向代理（如 Nginx）
 
 ## 部署步骤
 
-### 1. 安装 Docker 和 Docker Compose
+### 1. 配置 Nginx 反向代理
 
-```bash
-# 安装 Docker
-curl -fsSL https://get.docker.com | bash -s docker
-
-# 将当前用户添加到 docker 组
-sudo usermod -aG docker $USER
-
-# 应用组权限（无需重启）
-newgrp docker
-```
-
-> **⚠️ 注意**
->
-> 从 Docker Compose V2 开始，命令已更改为 `docker compose`（移除了中划线）。本文使用新的命令格式。
-
-### 2. 配置 Nginx 反向代理
-
-#### 2.1 安装必要组件
+#### 1.1 安装必要组件
 
 ```bash
 # 更新软件包列表
@@ -75,13 +61,13 @@ sudo apt update
 # 安装 Nginx  
 sudo apt install -y nginx 
 
-#安装 Certbot
+# 安装 Certbot
 sudo snap install --classic certbot
 ```
 
-#### 2.2 配置 Nginx
+#### 1.2 配置 Nginx
 
-在开始配置nginx的作用在于，如果使用http来连接vaultwarden会有莫名其妙的错误，也毫无安全可言，可以先配置好https再运行vaultwarden容器可以平滑的使用
+在开始配置 Nginx 的作用在于，如果使用 HTTP 连接 Vaultwarden 会有莫名其妙的错误，也毫无安全可言，可以先配置好 HTTPS 再运行 Vaultwarden 容器可以平滑地使用。
 
 创建 Nginx 配置文件：
 
@@ -139,8 +125,7 @@ server {
 }
 ```
 
-#### 2.3 启用配置并申请证书
-
+#### 1.3 启用配置并申请证书
 
 ```bash
 # 创建符号链接
@@ -152,20 +137,38 @@ sudo nginx -t
 # 重启 Nginx
 sudo systemctl restart nginx
 
-#  安装certbot
+# 安装 Certbot
 sudo snap install --classic certbot
 sudo ln -s /snap/bin/certbot /usr/bin/certbot
 
 # 申请 SSL 证书
 sudo certbot --nginx -d vault.adrainlee.me
-
 ```
 
-如果没有安装certbot请参考官网步骤安装 https://certbot.eff.org/
+如果没有安装 Certbot 请参考官网步骤安装 [Certbot 官网](https://certbot.eff.org/)
+
+### 2. 安装 Docker 和 Docker Compose
+
+```bash
+# 安装 Docker
+curl -fsSL https://get.docker.com | bash -s docker
+
+# 将当前用户添加到 docker 组
+sudo usermod -aG docker $USER
+
+# 应用组权限（无需重启）
+newgrp docker
+```
+
+> **⚠️ 注意**
+>
+> 从 Docker Compose V2 开始，命令已更改为 `docker compose`（移除了中划线）。本文使用新的命令格式。
 
 ### 3. 部署 Vaultwarden
 
-在指定目录创建 Docker Compose 配置文件：
+#### 3.1 创建 Docker Compose 配置文件
+
+在指定目录创建 Docker Compose 配置文件，这里使用的目录是 `/data/vault-docker`：
 
 ```yaml
 services:
@@ -181,8 +184,8 @@ services:
     environment:
       # 基本配置
       - DOMAIN=https://vault.adrainlee.me
-      - SIGNUPS_ALLOWED=false  #禁止注册
-      - ADMIN_TOKEN=$(openssl rand -base64 48)  #
+      - SIGNUPS_ALLOWED=false  # 禁止注册
+      - ADMIN_TOKEN=$(openssl rand -base64 48)  # 随机管理令牌
 
       # 安全配置
       - LOGIN_RATELIMIT_MAX_BURST=10
@@ -212,8 +215,33 @@ services:
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_POLL_INTERVAL=86400
 ```
+#### 3.2 启动vaultwarden容器
+```shell
+docker compose up -d
+```
+### 4. vaultwarden的管理员
+#### 4.1 登录管理后台并配置SMTP服务器
 
-### 4. 自动备份配置
+在浏览器中访问 `https://vault.adrainlee.me/admin`，使用在 Docker Compose 文件中设置的 `ADMIN_TOKEN` 登录管理后台。登录后，您可以配置 SMTP 服务器以便发送邮件通知。
+
+```plaintext
+SMTP 服务器配置示例：
+- SMTP 服务器地址：smtp.example.com
+- SMTP 端口：587
+- 用户名：your-email@example.com
+- 密码：your-email-password
+- 发件人地址：your-email@example.com
+```
+
+#### 4.2 邀请新用户
+
+在配置好smtp服务后在管理后台user选项卡，可以通过输入用户的电子邮件地址来邀请新用户。系统将向他们发送邀请邮件。
+
+#### 4.3 完成用户注册
+
+新用户收到邀请邮件后，点击邮件中的链接完成注册。注册后，他们将能够使用 Vaultwarden 管理自己的密码。
+
+### 5. 自动备份配置
 
 创建备份脚本：
 
@@ -240,9 +268,9 @@ rm -rf "${BACKUP_DIR}/temp"
 find "${BACKUP_DIR}" -type f -name "vaultwarden_backup_*.tar.gz" -mtime +${RETENTION_DAYS} -delete
 ```
 
-### 5. 维护和监控
+### 6. 维护和监控
 
-#### 5.1 健康检查
+#### 6.1 健康检查
 
 ```bash
 # 检查容器状态
@@ -255,7 +283,7 @@ docker logs -f vaultwarden
 docker stats vaultwarden
 ```
 
-#### 5.2 更新管理
+#### 6.2 更新管理
 
 Watchtower 会自动检查并更新容器。你也可以手动更新：
 
@@ -273,17 +301,19 @@ docker-compose up -d
 ### 常见问题解决
 
 1. 连接问题
-- 检查 Nginx 配置
-- 验证 SSL 证书
-- 确认防火墙规则
+   - 检查 Nginx 配置
+   - 验证 SSL 证书
+   - 确认防火墙规则
+
 2. 性能问题
-- 监控资源使用
-- 优化数据库
-- 清理日志文件
+   - 监控资源使用
+   - 优化数据库
+   - 清理日志文件
+
 3. 备份恢复
-- 定期测试备份
-- 验证备份完整性
-- 建立恢复流程
+   - 定期测试备份
+   - 验证备份完整性
+   - 建立恢复流程
 
 ## 总结
 
